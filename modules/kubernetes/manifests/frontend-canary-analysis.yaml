@@ -14,7 +14,10 @@ spec:
           address: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
           query: |
             100 *
-            sum(rate(frontend_http_requests_total{service="stratomesh-frontend-canary",status_code=~"5.."}[1m]))
+            (
+              sum(rate(frontend_http_requests_total{service="stratomesh-frontend-canary",status_code=~"5.."}[1m]))
+              or vector(0)
+            )
             /
             clamp_min(
               sum(rate(frontend_http_requests_total{service="stratomesh-frontend-canary"}[1m])),
