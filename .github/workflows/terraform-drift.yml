@@ -1,6 +1,6 @@
 ﻿name: terraform-drift
 
-on:
+'on':
   schedule:
     - cron: "30 2 * * *"
   workflow_dispatch:
@@ -18,14 +18,15 @@ jobs:
       DOCKER_HOST: npipe:////.//pipe//docker_engine
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Preflight checks
-        shell: pwsh
+      - name: Check local infrastructure
+        shell: powershell
         run: |
-          if (-not $env:TFSTATE_DB_PASSWORD) {
-            throw "TFSTATE_DB_PASSWORD secret is missing."
+          if ([string]::IsNullOrWhiteSpace($env:TFSTATE_DB_PASSWORD)) {
+            Write-Error "TFSTATE_DB_PASSWORD secret is missing."
+            exit 1
           }
 
           docker version
@@ -36,16 +37,16 @@ jobs:
         with:
           terraform_version: "1.16.4"
 
-      - name: Terraform init
+      - name: Terraform Init
         working-directory: envs/dev
-        shell: pwsh
+        shell: powershell
         run: |
           $env:PG_CONN_STR = "postgres://tfstate:$env:TFSTATE_DB_PASSWORD@127.0.0.1:5432/tfstate?sslmode=disable"
           terraform init -input=false
 
-      - name: Terraform drift check
+      - name: Terraform Drift Check
         working-directory: envs/dev
-        shell: pwsh
+        shell: powershell
         run: |
           $env:PG_CONN_STR = "postgres://tfstate:$env:TFSTATE_DB_PASSWORD@127.0.0.1:5432/tfstate?sslmode=disable"
 
@@ -53,39 +54,17 @@ jobs:
           $code = $LASTEXITCODE
 
           if ($code -eq 0) {
-            Write-Host "NO DRIFT: infrastructure matches Terraform configuration."
-
-            @"
-          ## Terraform Drift Check
-
-          ✅ **No drift detected.**
-
-          Infrastructure matches the Terraform configuration.
-          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            Write-Host "NO DRIFT: Infrastructure matches Terraform configuration."
+            "## Terraform Drift Check`n`n✅ No drift detected." | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            exit 0
           }
-          elseif ($code -eq 2) {
-            Write-Host "DRIFT DETECTED: Terraform found infrastructure changes."
 
-            @"
-          ## Terraform Drift Check
-
-          ⚠️ **Drift detected.**
-
-          Terraform found infrastructure changes.
-          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
+          if ($code -eq 2) {
+            Write-Host "DRIFT DETECTED: Terraform found changes."
+            "## Terraform Drift Check`n`n⚠️ Drift detected." | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
             exit 1
           }
-          else {
-            Write-Host "TERRAFORM ERROR: plan returned exit code $code."
 
-            @"
-          ## Terraform Drift Check
-
-          ❌ **Terraform error.**
-
-          Terraform plan returned exit code $code.
-          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-            exit $code
-          }
+          Write-Host "TERRAFORM ERROR: Terraform plan returned exit code $code."
+          "## Terraform Drift Check`n`n❌ Terraform error: exit code $code." | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          exit $code
