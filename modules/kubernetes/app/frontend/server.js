@@ -3,11 +3,21 @@ const client = require("prom-client");
 
 const app = express();
 const port = process.env.PORT || 8080;
-const backendUrl = process.env.BACKEND_URL || "http://stratomesh-backend:3000";
+const backendUrl =
+  process.env.BACKEND_URL || "http://stratomesh-backend:3000";
 
-// Prometheus metrics
+// ============================================================
+// Prometheus Metrics
+// ============================================================
+
 const register = new client.Registry();
+
+// Collect default Node.js metrics
 client.collectDefaultMetrics({ register });
+
+// ------------------------------------------------------------
+// HTTP Request Counter
+// ------------------------------------------------------------
 
 const httpRequests = new client.Counter({
   name: "frontend_http_requests_total",
@@ -15,38 +25,96 @@ const httpRequests = new client.Counter({
   labelNames: ["method", "route", "status_code"],
 });
 
-register.registerMetric(httpRequests);
+// ------------------------------------------------------------
+// HTTP Request Duration Histogram
+// Used for p99 latency calculation
+// ------------------------------------------------------------
 
-// Count HTTP responses
+const httpRequestDuration = new client.Histogram({
+  name: "frontend_http_request_duration_seconds",
+  help: "HTTP request duration in seconds",
+  labelNames: ["method", "route", "status_code"],
+  buckets: [
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1,
+    2,
+    5,
+  ],
+});
+
+// Register custom metrics
+register.registerMetric(httpRequests);
+register.registerMetric(httpRequestDuration);
+
+// ============================================================
+// HTTP Metrics Middleware
+// ============================================================
+
 app.use((req, res, next) => {
+  const start = process.hrtime();
+
   res.on("finish", () => {
+    // Calculate request duration in seconds
+    const diff = process.hrtime(start);
+    const duration = diff[0] + diff[1] / 1e9;
+
+    // Count HTTP request
     httpRequests.inc({
       method: req.method,
       route: req.path,
       status_code: res.statusCode,
     });
+
+    // Record HTTP request duration
+    httpRequestDuration.observe(
+      {
+        method: req.method,
+        route: req.path,
+        status_code: res.statusCode,
+      },
+      duration
+    );
   });
 
   next();
 });
 
-// Prometheus metrics endpoint
+// ============================================================
+// Prometheus Metrics Endpoint
+// ============================================================
+
 app.get("/metrics", async (req, res) => {
-  res.set("Content-Type", register.contentType);
-  res.end(await register.metrics());
+  try {
+    res.set("Content-Type", register.contentType);
+    res.end(await register.metrics());
+  } catch (error) {
+    console.error("Metrics generation failed:", error.message);
+    res.status(500).send("Metrics unavailable");
+  }
 });
+
+// ============================================================
+// Main Dashboard
+// ============================================================
 
 app.get("/", async (req, res) => {
   let backendStatus = "unavailable";
   let databaseStatus = "unavailable";
 
   try {
+    // Check backend health
     const healthResponse = await fetch(`${backendUrl}/health`);
 
     if (healthResponse.ok) {
       backendStatus = "healthy";
     }
 
+    // Check backend database readiness
     const readyResponse = await fetch(`${backendUrl}/ready`);
 
     if (readyResponse.ok) {
@@ -60,8 +128,10 @@ app.get("/", async (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
+
     <head>
       <title>StratoMesh Dashboard</title>
+
       <style>
         body {
           font-family: Arial, sans-serif;
@@ -94,10 +164,13 @@ app.get("/", async (req, res) => {
           font-weight: bold;
         }
       </style>
+
     </head>
 
     <body>
+
       <div class="container">
+
         <h1>StratoMesh Platform</h1>
 
         <p>GitOps & Self-Healing Cloud Platform</p>
@@ -116,17 +189,28 @@ app.get("/", async (req, res) => {
           Database:
           <span class="value">${databaseStatus}</span>
         </div>
+
       </div>
+
     </body>
+
     </html>
   `);
 });
 
+// ============================================================
+// Health Check
+// ============================================================
+
 app.get("/health", (req, res) => {
   res.status(200).json({
-    status: "healthy"
+    status: "healthy",
   });
 });
+
+// ============================================================
+// Start Server
+// ============================================================
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`StratoMesh frontend listening on port ${port}`);
