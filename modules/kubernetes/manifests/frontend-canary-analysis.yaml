@@ -7,7 +7,7 @@ spec:
   metrics:
     - name: canary-http-error-rate
       interval: 30s
-      count: 3
+      count: 6
       failureLimit: 1
       provider:
         prometheus:

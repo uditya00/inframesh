@@ -9,6 +9,7 @@ spec:
   selector:
     matchLabels:
       app: stratomesh-frontend
+
   template:
     metadata:
       labels:
@@ -42,6 +43,7 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+
   strategy:
     canary:
       stableService: stratomesh-frontend
@@ -51,6 +53,4 @@ spec:
         - analysis:
             templates:
               - templateName: frontend-canary-error-rate
-        - setWeight: 50
-        - pause: {}
         - setWeight: 100
