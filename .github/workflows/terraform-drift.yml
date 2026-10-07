@@ -1,0 +1,91 @@
+﻿name: terraform-drift
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+
+    env:
+      TFSTATE_DB_PASSWORD: ${{ secrets.TFSTATE_DB_PASSWORD }}
+      DOCKER_HOST: npipe:////.//pipe//docker_engine
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Preflight checks
+        shell: pwsh
+        run: |
+          if (-not $env:TFSTATE_DB_PASSWORD) {
+            throw "TFSTATE_DB_PASSWORD secret is missing."
+          }
+
+          docker version
+          kubectl get nodes
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.4"
+
+      - name: Terraform init
+        working-directory: envs/dev
+        shell: pwsh
+        run: |
+          $env:PG_CONN_STR = "postgres://tfstate:$env:TFSTATE_DB_PASSWORD@127.0.0.1:5432/tfstate?sslmode=disable"
+          terraform init -input=false
+
+      - name: Terraform drift check
+        working-directory: envs/dev
+        shell: pwsh
+        run: |
+          $env:PG_CONN_STR = "postgres://tfstate:$env:TFSTATE_DB_PASSWORD@127.0.0.1:5432/tfstate?sslmode=disable"
+
+          terraform plan -input=false -detailed-exitcode
+          $code = $LASTEXITCODE
+
+          if ($code -eq 0) {
+            Write-Host "NO DRIFT: infrastructure matches Terraform configuration."
+
+            @"
+          ## Terraform Drift Check
+
+          ✅ **No drift detected.**
+
+          Infrastructure matches the Terraform configuration.
+          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+          elseif ($code -eq 2) {
+            Write-Host "DRIFT DETECTED: Terraform found infrastructure changes."
+
+            @"
+          ## Terraform Drift Check
+
+          ⚠️ **Drift detected.**
+
+          Terraform found infrastructure changes.
+          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+            exit 1
+          }
+          else {
+            Write-Host "TERRAFORM ERROR: plan returned exit code $code."
+
+            @"
+          ## Terraform Drift Check
+
+          ❌ **Terraform error.**
+
+          Terraform plan returned exit code $code.
+          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+            exit $code
+          }
