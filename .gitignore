@@ -7,3 +7,9 @@ crash.log
 *.pem
 *.key
 tfplan
+
+# Local/generated files
+node_modules/
+*.backup
+argocd-source-patch.json
+rollout-patch.json
